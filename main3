@@ -1,0 +1,217 @@
+; Archivo: main2.s
+; Dispositivo: PIC16F887
+; Autor: Paola Ayala Pineda 
+; Compilador: pic-as (v2.35), MPLAB
+;
+; Programa: Contador binario de 4 bits (incremento simultáneo contador tmr0)
+; Hardware: LEDs port D 
+;
+; Creado 08 feb, 2022
+; Última modificación: 12 feb, 2022
+
+    
+PROCESSOR 16F887
+#include <xc.inc>
+    
+;CONFIG 1
+ CONFIG FOSC=INTRC_NOCLKOUT  // Oscillador Interno sin salidas
+ CONFIG WDTE=OFF    // WDT disabled (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON    // PWRT enabled (espera de 72ms al iniciar)
+ CONFIG MCLRE=OFF   // El pin de MCLR se utiliza como I/O
+ CONFIG CP=OFF	    // Sin protección de código 
+ CONFIG CPD=OFF	    // Sin protección de datos
+ 
+ CONFIG BOREN=OFF   // Sin reinicio cuando el voltaje de alimentación baja de 4V
+ CONFIG IESO=OFF    // Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF   // Cambio de reloj externo a interno en caso de fallo
+ CONFIG LVP=ON	    // Programación en bajo voltaje permitida
+ 
+;CONFIG 2
+ CONFIG WRT=OFF	    // Protección de autoescritura por el programa desactivada
+ CONFIG BOR4V=BOR40V	// Reinicio abajo de 4V, (BOR21V=2.1V)
+ 
+  
+PSECT udata_bank0 ;common memory
+  cont: DS 1 ; 2 bytes
+  conta: DS 1  
+  cont_small: DS 1 ; 1 byte
+    
+;---------------VECTOR RESET--------------
+    
+ PSECT resVect, class=CODE, abs, delta=2
+ ORG 00h  ;posición 0000h para el reset
+    
+ resetVec:
+    PAGESEL main
+    goto main
+ 
+ PSECT code, delta=2, abs
+ ORG 100h  ; posición para el código 
+ 
+ tabla_chidori: 
+    clrf PCLATH 
+    bsf PCLATH, 0   ;PCLATH = 01
+    andlw 0x0f	    ;deja pasar cualquier número menor a 16
+    addwf PCL	    ;PC = PCLATH + PCL + W
+    retlw 00111111B ;0
+    retlw 00000110B ;1
+    retlw 01011011B ;2
+    retlw 01001111B ;3
+    retlw 01100110B ;4
+    retlw 01101101B ;5
+    retlw 01111101B ;6
+    retlw 00000111B ;7
+    retlw 01111111B ;8
+    retlw 01101111B ;9
+    retlw 01110111B ;A
+    retlw 01111100B ;B
+    retlw 00111001B ;C
+    retlw 01011110B ;D
+    retlw 01111001B ;E
+    retlw 01110001B ;F
+    
+ ;--------------CONFIGURACIÓN-------------
+ main:
+    call    config_io
+    call    config_reloj
+    call    config_tmr0
+    banksel PORTA
+    
+;---------------LOOP PRINCIPAL-------------
+loop:
+    btfss   T0IF
+    goto    $-1
+    call    reiniciar_tmr0	
+    call    contador_tmr0
+    
+    btfsc   PORTB, 0
+    call    inc_portc
+    btfsc   PORTB, 1
+    call    dec_portc
+    
+    movf    conta, W
+    call    tabla_chidori
+    movwf   PORTC
+    call    compare
+    goto    loop
+
+; ---------------SUB RUTINAS----------------
+ ; temporización = 4 * (1/Fosc) * (256 - Tmr0) * Prescaler
+ ; 100 ms = 4 * (1/500kHz) * (256 - Tmr0) * 64
+ ; Tmr0 = 60
+ 
+config_reloj:
+    banksel OSCCON
+    bcf	    IRCF2	; IRCF = 011 500kHz  
+    bsf	    IRCF1	 
+    bsf	    IRCF0
+    bsf	    SCS		; reloj interno
+    return 
+
+config_io:
+    banksel ANSEL	; banco 11
+    clrf    ANSEL	; pines digitales
+    clrf    ANSELH
+    
+    banksel TRISA	; banco 01
+    bsf	    TRISB, 0	; botón para incrementar
+    bsf	    TRISB, 1	; botón para decrementar
+    bcf	    TRISB, 2	; led alarma
+    clrf    TRISA	; port A como salida
+    clrf    TRISC	; port C como salida
+    clrf    TRISD	; port D como salida 
+    
+    banksel PORTA	; banco 00
+    clrf PORTA
+    clrf PORTB
+    clrf PORTC
+    clrf PORTD
+    
+    return
+    
+ config_tmr0:
+    banksel TRISA
+    bcf	    T0CS	; reloj interno
+    bcf	    PSA		; prescaler
+    bsf	    PS2
+    bcf	    PS1
+    bsf	    PS0		; PS = 101
+    banksel PORTA
+    call    reiniciar_tmr0
+    return
+    
+offf:
+    bcf	conta,  4	; estos bits se apagan 
+    bcf	conta,  5	; pues no son necesarios
+    bcf	conta,  6	; de lo contrario se tomaria
+    bcf	conta,  7	; como un contador de 8 bits
+    return
+
+    
+reiniciar_tmr0:
+    movlw   60		; al iniciar subrutinas se encuentra el resutlado de este cálculo
+    movwf   TMR0	
+    bcf	    T0IF
+    return
+
+inc_portc:
+    btfss PORTB, 0
+    goto $-1
+    btfsc PORTB, 0 
+    goto $-1
+    incf conta
+    btfsc conta, 4
+    clrf conta  
+    
+    return
+    
+dec_portc:
+    btfss PORTB, 1
+    goto $-1
+    btfsc PORTB, 1
+    goto $-1
+    decf conta, F
+    btfsc conta, 7
+    call coun
+    return
+    
+coun:
+    bcf conta, 4
+    bcf conta, 5
+    bcf conta, 6
+    bcf conta, 7
+    return
+    
+contador_tmr0:
+    incf   PORTA
+    movlw  10
+    subwf  PORTA, 0
+    btfsc  STATUS, 2
+    call   contador_dis
+    return 
+    
+contador_dis:
+    clrf  PORTA
+    incf  PORTD
+    btfsc PORTD, 4
+    clrf  PORTD
+    return
+    
+ compare:
+    movf  PORTD, W  ; guarda los datos del puerto a W
+    subwf conta, 0  ; resta la variable conta a w
+    btfsc STATUS, 2 ; si es 0 la resta 
+    call  alarma    ; se enciende la led
+    return
+    
+    
+ delay_small:
+    movlw   250		    ; valor inicial del contador
+    movwf   cont
+    decfsz  cont, 1	    ; decrementar al contador
+    goto    $-1		    ; ejecutar el contador
+    return
+END
+
+
+
